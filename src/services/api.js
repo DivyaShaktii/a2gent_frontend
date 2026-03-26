@@ -1,42 +1,89 @@
 import axios from 'axios';
 
-// 1. Point this to your backend
+const API_BASE = 'http://localhost:8000';
+
 const API = axios.create({
-  baseURL: 'http://localhost:8000', // <--- CHANGE THIS TO YOUR BACKEND PORT
+  baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// 2. Define your API calls
 export const projectService = {
-  // GET /api/v1/projects
   getAll: async () => {
-    const response = await API.get('/api/v1/projects');
+    // Add the slash at the end
+    const response = await API.get('/api/v1/projects/'); 
     return response.data;
   },
 
-  // POST /api/v1/projects
   create: async (name) => {
-    const response = await API.post('/api/v1/projects', { name });
+    // Add the slash at the end
+    const response = await API.post('/api/v1/projects/', { name }); 
     return response.data;
   },
 
-  // GET /api/v1/projects/{id}/history
   getHistory: async (projectId) => {
-    const response = await API.get(`/api/v1/projects/${projectId}/history`);
+    // Add the slash at the end
+    const response = await API.get(`/api/v1/projects/${projectId}/history/`); 
     return response.data;
   },
 
-  // (Optional) We need an API to send a message!
-  // Assuming POST /api/v1/chat or similar
-  sendMessage: async (projectId, message, agent) => {
-    const response = await API.post('/api/v1/chat', { 
-      project_id: projectId,
-      message: message,
-      agent_type: agent 
+  uploadFile: async (formData) => {
+    const response = await API.post('/api/v1/files/upload', formData, {
+      headers: { 
+        'Content-Type': 'multipart/form-data' 
+      }
     });
     return response.data;
+  },
+
+  streamMessage: async (projectId, message, agent, onUpdate) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/chat/`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream'
+        },
+        body: JSON.stringify({ 
+          project_id: projectId, 
+          message: message, 
+          agent_type: agent,
+          use_react: true 
+        })
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      
+      // SSE can send multiple lines in one chunk, we must split them correctly
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine || !trimmedLine.startsWith('data:')) continue;
+          
+          try {
+            // Remove 'data: ' prefix and parse
+            const jsonStr = trimmedLine.replace('data:', '').trim();
+            const data = JSON.parse(jsonStr);
+            onUpdate(data);
+          } catch (e) {
+            console.warn("Skipping partial/malformed line:", trimmedLine);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Stream connection failed:", error);
+      onUpdate({ type: 'final', data: `Error connecting to backend: ${error.message}` });
+    }
   }
 };
 

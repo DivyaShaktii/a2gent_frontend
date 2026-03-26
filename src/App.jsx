@@ -1,3 +1,4 @@
+// --- START OF FILE src/App.jsx ---
 import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
@@ -7,13 +8,12 @@ import { projectService } from './services/api';
 function App() {
   const [projects, setProjects] = useState([]);
   const [activeProjectId, setActiveProjectId] = useState(null);
-  const [chatHistory, setChatHistory] = useState([]);
+  const[chatHistory, setChatHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Load Projects (Mock)
   useEffect(() => {
     loadProjects();
-  }, []);
+  },[]);
 
   useEffect(() => {
     if (activeProjectId) {
@@ -25,7 +25,6 @@ function App() {
     try {
       const data = await projectService.getAll();
       setProjects(data);
-      // Auto-select the first project if exists
       if (data.length > 0 && !activeProjectId) {
         setActiveProjectId(data[0].id);
       }
@@ -47,14 +46,14 @@ function App() {
   };
 
   const handleNewProject = async () => {
-    const name = prompt("Enter project name:"); // Simple prompt for now
+    const name = prompt("Enter project name:"); 
     if (!name) return;
 
     try {
       const newProject = await projectService.create(name);
       setProjects([...projects, newProject]);
-      setActiveProjectId(newProject.id); // Switch to new project
-      setChatHistory([]); // Clear chat
+      setActiveProjectId(newProject.id); 
+      setChatHistory([]); 
     } catch (error) {
       console.error("Failed to create project:", error);
     }
@@ -63,42 +62,58 @@ function App() {
   const handleUserMessage = async (text) => {
     if (!activeProjectId) return alert("Select a project first!");
 
-    // 1. Optimistic UI: Show user message immediately
+    // 1. Add User message
     const tempUserMsg = { role: 'user', content: text };
-    setChatHistory((prev) => [...prev, tempUserMsg]);
+    
+    // 2. Create the placeholder for AI with role 'assistant'
+    const tempAiId = Date.now(); 
+    const tempAiMsg = { 
+      id: tempAiId, 
+      role: 'assistant', // Changing from 'ai' to 'assistant' to match industry standard
+      content: '', 
+      currentAction: 'Initializing agent...', 
+      agentName: 'A2gent' 
+    };
 
-    // 2. Determine Agent (Simple parsing)
-    let agentType = "super_agent";
+    setChatHistory((prev) => [...prev, tempUserMsg, tempAiMsg]);
+
+    let agentType = "chat"; // Default role
     if (text.includes("@ppt")) agentType = "ppt_agent";
     if (text.includes("@finance")) agentType = "finance_agent";
 
-    // 3. Send to Backend
     try {
-      const response = await projectService.sendMessage(activeProjectId, text, agentType);
-      
-      // 4. Add AI Response
-      setChatHistory((prev) => [...prev, { 
-        role: 'ai', 
-        content: response.response, // Assuming your backend returns { reply: "..." }
-        agentName: response.model_used
-      }]);
+      await projectService.streamMessage(activeProjectId, text, agentType, (data) => {
+        setChatHistory((prev) => 
+          prev.map(msg => {
+            if (msg.id === tempAiId) {
+              if (data.type === 'status') {
+                return { ...msg, currentAction: data.data };
+              }
+              if (data.type === 'final') {
+                // When we get the final answer, hide the spinner (currentAction: null)
+                return { ...msg, content: data.data, currentAction: null };
+              }
+            }
+            return msg;
+          })
+        );
+      });
     } catch (error) {
       console.error("Failed to send message:", error);
-      // Optional: Add an error message to chat
-      setChatHistory((prev) => [...prev, { role: 'ai', content: "Error: Could not reach agent." }]);
+      setChatHistory((prev) => prev.map(msg => 
+        msg.id === tempAiId ? { ...msg, content: "Error: Connection to Agent failed.", currentAction: null } : msg
+      ));
     }
   };
 
   return (
     <div className="flex h-screen w-screen bg-bg-app font-sans text-text-primary overflow-hidden">
-
       <Sidebar 
         projects={projects} 
         activeProjectId={activeProjectId}
         onSelectProject={setActiveProjectId}
         onNewProject={handleNewProject}
       />
-
       <main className="flex-1 flex flex-col relative h-full">
         <header className="h-16 flex-shrink-0 flex items-center justify-between px-8 border-b border-gray-200 bg-white/50 backdrop-blur-sm">
           <div className="flex items-center gap-2 px-3 py-1 bg-white rounded-full border border-gray-200 shadow-sm">
@@ -108,9 +123,7 @@ function App() {
             </span>
           </div>
         </header>
-
         <ChatArea history={chatHistory} />
-
         <InputArea onSendMessage={handleUserMessage} />
       </main>
     </div>
@@ -118,3 +131,4 @@ function App() {
 }
 
 export default App;
+// --- END OF FILE src/App.jsx ---
